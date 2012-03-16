@@ -17,6 +17,10 @@ register_activation_hook( __FILE__, 'sss_activation' );
 register_uninstall_hook( __FILE__, 'sss_uninstall' ); 
 add_shortcode( 'simple_slideshow', 'sss_handle_shortcode' );
 add_action( 'init', 'sss_load_externals' );
+//add option to create multiple slideshows per post
+add_filter('attachment_fields_to_edit', 'sss_edit_attachment_slideshow_id', 10, 2);
+add_filter('attachment_fields_to_save', 'sss_save_attachment_slideshow_id', 10, 2);
+
 
 if( is_admin() ){
 	require_once 'simpleslider-admin.php';
@@ -73,8 +77,35 @@ function sss_load_externals() {
 		dirname( __FILE__ ) ) );
 }
 
+function sss_get_slideshow_include_list($post_id, $gallery_id)
+{
+	global $wpdb;
+	$attachments_meta = $wpdb->get_results("SELECT {$wpdb->prefix}posts.ID, {$wpdb->prefix}postmeta.meta_key, {$wpdb->prefix}postmeta.meta_value FROM {$wpdb->prefix}posts LEFT JOIN {$wpdb->prefix}postmeta on {$wpdb->prefix}posts.ID = {$wpdb->prefix}postmeta.post_id WHERE post_type = 'attachment' AND post_parent = $post_id");
+	$attachments = array();
+	foreach ($attachments_meta as $attachment)
+	{
+		if (!isset($attachments[$attachment->ID])) $attachments[$attachment->ID] = array();
+		$attachments[$attachment->ID][$attachment->meta_key] = $attachment->meta_value;
+	}
+	$include_list = array();
+	foreach($attachments as $id => $attachment)
+	{
+		if ($gallery_id == 1)
+		{
+			if ($attachment['sss_slideshow_id'] == 1 or !isset($attachment['sss_slideshow_id'])) $include_list[] = $id;
+		}
+		else
+		{
+			if ($attachment['sss_slideshow_id'] == $gallery_id) $include_list[] = $id;
+		}
+	}
+	return $include_list;
+}
+
 
 function sss_handle_shortcode( $attrs ) {
+	$slideshow_id = ($attrs['slideshow_id']) ? $attrs['slideshow_id'] : 1;
+	$include_list = sss_get_slideshow_include_list(get_the_ID(), $slideshow_id);
 	$resp = '';
 	$defaults = get_option( 'sss_settings' );
 	if( ! $defaults ) 
@@ -90,12 +121,13 @@ function sss_handle_shortcode( $attrs ) {
 	unset( $cycle_version );
 	
 				
-	$images =& get_children( 'post_type=attachment&post_mime_type=' .
+	$all_images =& get_children( 'post_type=attachment&post_mime_type=' .
 								'image&post_parent=' . get_the_ID() .
-								'&orderby=menu_order&order=ASC' );
-	
-	print_r(shortcode_atts( $defaults, 
-				$attrs));			
+								'&orderby=menu_order&order=ASC' ); 	
+	foreach($all_images as $id => $image)
+	{
+		if (in_array($id, $include_list)) $images[$id] = $image;
+	}
 	
 	// Don't load anything or start processing if there are no 
 	// images to display.
@@ -189,5 +221,27 @@ function sss_handle_shortcode( $attrs ) {
 	$resp .= "\n".'<script type="text/javascript">simpleslider_prefs['.$slider_show_number.'] = '.json_encode($prefs).'</script>';
 	
 	return $resp;
+}
+
+function sss_edit_attachment_slideshow_id($form_fields, $post)
+{
+	if(is_admin) {
+		$value = get_post_meta($post->ID, 'sss_slideshow_id');
+		$form_fields['sss_slideshow_id'] = array(
+			'label' => 'Slideshow ID',
+			'input' => 'text',
+			'value' => get_post_meta($post->ID, 'sss_slideshow_id', true),
+			'helps' => 'Set this if you want more than one slideshow per page. Defaults to 1 if left blank.'
+		);
+	}
+	
+	return $form_fields;
+}
+
+function sss_save_attachment_slideshow_id($post, $attachment)
+{
+	$slideshow_id = (isset($attachment['sss_slideshow_id'])) ? $attachment['sss_slideshow_id'] : 1;
+	update_post_meta($post['ID'], 'sss_slideshow_id', $slideshow_id);
+	return $post;
 }
 ?>
